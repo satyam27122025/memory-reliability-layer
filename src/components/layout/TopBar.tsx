@@ -1,14 +1,13 @@
-import { Menu, Plus, RotateCcw, AlertTriangle, Terminal } from 'lucide-react';
+import { Menu, Plus, AlertTriangle, Terminal } from 'lucide-react';
 import { Button } from '../ui/Button';
 
 interface TopBarProps {
   onMenuClick: () => void;
   onOpenAddFact: () => void;
-  onResetData: () => void;
   activeConflicts: number;
 }
 
-export function TopBar({ onMenuClick, onOpenAddFact, onResetData, activeConflicts }: TopBarProps) {
+export function TopBar({ onMenuClick, onOpenAddFact, activeConflicts }: TopBarProps) {
   return (
     <header className="sticky top-0 z-10 bg-white/90 backdrop-blur-md border-b border-surface-200">
       <div className="flex items-center justify-between h-14 px-4 sm:px-6">
@@ -25,10 +24,10 @@ export function TopBar({ onMenuClick, onOpenAddFact, onResetData, activeConflict
           <div className="flex items-center gap-2 text-xs font-mono text-surface-500">
             <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-100 border border-surface-200 text-surface-700">
               <Terminal size={12} className="text-accent-600" />
-              agent-lineage://demo-workspace
+              memory-api://sqlite
             </span>
             <span className="hidden lg:inline text-surface-400">/</span>
-            <span className="hidden lg:inline text-surface-600">multi-source-consistency</span>
+            <span className="hidden lg:inline text-surface-600">backend-authoritative</span>
           </div>
         </div>
 
@@ -40,17 +39,6 @@ export function TopBar({ onMenuClick, onOpenAddFact, onResetData, activeConflict
               <span>{activeConflicts} {activeConflicts === 1 ? 'conflict' : 'conflicts'} unresolved</span>
             </div>
           )}
-
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onResetData}
-            title="Reset to default mock dataset"
-            className="text-xs"
-          >
-            <RotateCcw size={13} />
-            <span className="hidden md:inline">Reset Mock</span>
-          </Button>
 
           <Button
             variant="primary"
@@ -66,4 +54,3 @@ export function TopBar({ onMenuClick, onOpenAddFact, onResetData, activeConflict
     </header>
   );
 }
-

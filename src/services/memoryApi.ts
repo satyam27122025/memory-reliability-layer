@@ -1,219 +1,260 @@
-import type { Fact, CreateFactInput, ResolveFactInput, QueryResult } from '../types/facts';
-import { DEMO_FACTS } from '../data/demoFacts';
-import { generateId, generateAssertionId, generateEventId } from '../lib/formatting';
+import type {
+  CreateFactInput,
+  Fact,
+  FactHistoryEvent,
+  QueryResult,
+  ResolveFactInput,
+  SourceType,
+} from '../types/facts';
 
-const STORAGE_KEY = 'memory-reliability-facts';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000')
+  .trim()
+  .replace(/\/+$/, '');
 
-function loadFacts(): Fact[] {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch {
-    // Fall through to defaults
+interface ApiAssertion {
+  id: string;
+  assertionVersion?: number;
+  value: string;
+  sourceType: SourceType;
+  sourceLabel: string;
+  sourceReference: string;
+  recordedAt: string;
+  notes?: string | null;
+  createdAt?: string;
+}
+
+interface ApiHistoryEvent {
+  id: string;
+  type: FactHistoryEvent['type'];
+  timestamp: string;
+  description: string;
+  assertionId?: string | null;
+  reason?: string | null;
+  resolvedBy?: string | null;
+}
+
+interface ApiFact {
+  id: string;
+  entity: string;
+  attribute: string;
+  status: Fact['status'];
+  assertions: ApiAssertion[];
+  selectedAssertionId?: string | null;
+  resolutionReason?: string | null;
+  resolvedBy?: string | null;
+  resolvedAt?: string | null;
+  history: ApiHistoryEvent[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export class ApiError extends Error {
+  readonly status: number | null;
+  readonly detail: unknown;
+
+  constructor(message: string, status: number | null, detail?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
   }
-  const defaults = structuredClone(DEMO_FACTS);
-  saveFacts(defaults);
-  return defaults;
 }
 
-function saveFacts(facts: Fact[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(facts));
+function mapHistory(event: ApiHistoryEvent): FactHistoryEvent {
+  return {
+    id: event.id,
+    type: event.type,
+    timestamp: event.timestamp,
+    description: event.description,
+    assertionId: event.assertionId ?? undefined,
+    reason: event.reason ?? undefined,
+    resolvedBy: event.resolvedBy ?? undefined,
+  };
 }
 
-// Simulated network delay for realistic UX
-function delay(ms: number = 150): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+export function mapFactResponse(response: ApiFact): Fact {
+  return {
+    id: response.id,
+    entity: response.entity,
+    attribute: response.attribute,
+    status: response.status,
+    assertions: response.assertions.map(assertion => ({
+      id: assertion.id,
+      version: assertion.assertionVersion ?? 1,
+      value: assertion.value,
+      sourceType: assertion.sourceType,
+      sourceLabel: assertion.sourceLabel,
+      sourceReference: assertion.sourceReference,
+      recordedAt: assertion.recordedAt,
+      notes: assertion.notes ?? undefined,
+    })),
+    selectedAssertionId: response.selectedAssertionId ?? undefined,
+    resolutionReason: response.resolutionReason ?? undefined,
+    resolvedBy: response.resolvedBy ?? undefined,
+    resolvedAt: response.resolvedAt ?? undefined,
+    history: response.history.map(mapHistory),
+    createdAt: response.createdAt,
+    updatedAt: response.updatedAt,
+  };
 }
 
-export async function listFacts(): Promise<Fact[]> {
-  await delay();
-  return loadFacts();
+function backendDetail(payload: unknown): unknown {
+  if (typeof payload === 'object' && payload !== null && 'detail' in payload) {
+    return (payload as { detail: unknown }).detail;
+  }
+  return payload;
 }
 
-export async function getFact(id: string): Promise<Fact | null> {
-  await delay();
-  const facts = loadFacts();
-  return facts.find(f => f.id === id) || null;
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...init.headers,
+      },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new ApiError(
+      'Could not reach the Memory Reliability API. Check that the backend is running and retry.',
+      null,
+      error instanceof Error ? error.message : undefined,
+    );
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json')
+    ? await response.json().catch(() => undefined)
+    : await response.text().catch(() => '');
+
+  if (!response.ok) {
+    const detail = backendDetail(payload);
+    const message = typeof detail === 'string'
+      ? detail
+      : detail !== undefined
+      ? `${JSON.stringify(detail)} (HTTP ${response.status})`
+      : `The API request failed with HTTP ${response.status}.`;
+    throw new ApiError(message, response.status, detail);
+  }
+
+  return payload as T;
+}
+
+function notifyFactsChanged(): void {
+  window.dispatchEvent(new CustomEvent('memory:facts-changed'));
+}
+
+export async function listFacts(options: { signal?: AbortSignal } = {}): Promise<Fact[]> {
+  const response = await request<{ facts: ApiFact[]; total: number }>('/facts', {
+    signal: options.signal,
+  });
+  return response.facts.map(mapFactResponse);
+}
+
+export async function getFact(id: string, options: { signal?: AbortSignal } = {}): Promise<Fact> {
+  const response = await request<ApiFact>(`/facts/${encodeURIComponent(id)}`, {
+    signal: options.signal,
+  });
+  return mapFactResponse(response);
+}
+
+export async function getFactHistory(
+  id: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<FactHistoryEvent[]> {
+  const response = await request<{ factId: string; history: ApiHistoryEvent[] }>(
+    `/facts/${encodeURIComponent(id)}/history`,
+    { signal: options.signal },
+  );
+  return response.history.map(mapHistory);
 }
 
 export async function createFact(input: CreateFactInput): Promise<Fact> {
-  await delay(200);
-  const facts = loadFacts();
-  const now = new Date().toISOString();
-  const assertionId = generateAssertionId();
-
-  // Check if a fact with the same entity+attribute already exists
-  const existing = facts.find(
-    f => f.entity.toLowerCase() === input.entity.toLowerCase() &&
-         f.attribute.toLowerCase() === input.attribute.toLowerCase()
-  );
-
-  if (existing) {
-    // Add as new assertion
-    const newAssertion = {
-      id: assertionId,
+  const response = await request<ApiFact>('/facts', {
+    method: 'POST',
+    body: JSON.stringify({
+      entity: input.entity,
+      attribute: input.attribute,
       value: input.value,
       sourceType: input.sourceType,
       sourceLabel: input.sourceLabel,
       sourceReference: input.sourceReference,
       recordedAt: input.recordedAt,
       notes: input.notes,
-    };
-    existing.assertions.push(newAssertion);
-    
-    // Check for conflict
-    const uniqueValues = new Set(existing.assertions.map(a => a.value.toLowerCase()));
-    if (uniqueValues.size > 1 && existing.status !== 'resolved') {
-      existing.status = 'conflict';
-      existing.history.push({
-        id: generateEventId(),
-        type: 'conflict_detected',
-        timestamp: now,
-        description: `Conflict detected: values differ across ${existing.assertions.length} sources`,
-      });
-    }
-    
-    existing.history.push({
-      id: generateEventId(),
-      type: 'assertion_added',
-      timestamp: now,
-      description: `New assertion added from ${input.sourceLabel}`,
-      assertionId,
-    });
-    existing.updatedAt = now;
-    
-    saveFacts(facts);
-    return existing;
-  }
-
-  const factId = generateId();
-  const newFact: Fact = {
-    id: factId,
-    entity: input.entity,
-    attribute: input.attribute,
-    status: 'supported',
-    assertions: [
-      {
-        id: assertionId,
-        value: input.value,
-        sourceType: input.sourceType,
-        sourceLabel: input.sourceLabel,
-        sourceReference: input.sourceReference,
-        recordedAt: input.recordedAt,
-        notes: input.notes,
-      },
-    ],
-    history: [
-      {
-        id: generateEventId(),
-        type: 'created',
-        timestamp: now,
-        description: `Fact created from ${input.sourceLabel}`,
-        assertionId,
-      },
-    ],
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  facts.unshift(newFact);
-  saveFacts(facts);
-  return newFact;
-}
-
-export async function resolveFact(id: string, resolution: ResolveFactInput): Promise<Fact | null> {
-  await delay(200);
-  const facts = loadFacts();
-  const fact = facts.find(f => f.id === id);
-  if (!fact) return null;
-
-  const now = new Date().toISOString();
-  const selectedAssertion = fact.assertions.find(a => a.id === resolution.selectedAssertionId);
-
-  fact.status = 'resolved';
-  fact.selectedAssertionId = resolution.selectedAssertionId;
-  fact.resolutionReason = resolution.resolutionReason;
-  fact.resolvedBy = resolution.resolvedBy;
-  fact.resolvedAt = now;
-  fact.updatedAt = now;
-
-  fact.history.push({
-    id: generateEventId(),
-    type: 'resolved',
-    timestamp: now,
-    description: `Resolved: ${selectedAssertion?.value || 'unknown'} selected by ${resolution.resolvedBy}`,
-    reason: resolution.resolutionReason,
+    }),
   });
-
-  saveFacts(facts);
+  const fact = mapFactResponse(response);
+  notifyFactsChanged();
   return fact;
 }
 
-export async function getFactHistory(id: string): Promise<Fact['history']> {
-  await delay();
-  const fact = await getFact(id);
-  return fact?.history || [];
+export async function updateFact(
+  id: string,
+  input: Partial<CreateFactInput> & { assertionId?: string; assertionVersion?: number },
+): Promise<Fact> {
+  const response = await request<ApiFact>(`/facts/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      assertionId: input.assertionId,
+      assertionVersion: input.assertionVersion,
+      value: input.value,
+      sourceType: input.sourceType,
+      sourceLabel: input.sourceLabel,
+      sourceReference: input.sourceReference,
+      recordedAt: input.recordedAt,
+      notes: input.notes,
+    }),
+  });
+  const fact = mapFactResponse(response);
+  notifyFactsChanged();
+  return fact;
 }
 
-export async function queryFacts(query: string): Promise<QueryResult> {
-  await delay(300);
-  const facts = loadFacts();
-  const q = query.toLowerCase();
-
-  // Simple keyword matching for demo
-  const matched = facts.find(f => {
-    const entityMatch = f.entity.toLowerCase().includes(q) || q.includes(f.entity.toLowerCase());
-    const attrMatch = f.attribute.toLowerCase().includes(q) || q.includes(f.attribute.toLowerCase());
-    return entityMatch || (entityMatch && attrMatch);
+export async function resolveFact(id: string, resolution: ResolveFactInput): Promise<Fact> {
+  const response = await request<ApiFact>(`/facts/${encodeURIComponent(id)}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({
+      selectedAssertionId: resolution.selectedAssertionId,
+      assertionVersion: resolution.assertionVersion,
+      resolutionReason: resolution.resolutionReason,
+      resolvedBy: resolution.resolvedBy,
+    }),
   });
+  const fact = mapFactResponse(response);
+  notifyFactsChanged();
+  return fact;
+}
 
-  if (!matched) {
-    return {
-      status: 'not_found',
-      answer: null,
-      evidence: [],
-    };
-  }
-
-  if (matched.status === 'conflict') {
-    return {
-      status: 'conflict',
-      answer: null,
-      entity: matched.entity,
-      attribute: matched.attribute,
-      factId: matched.id,
-      evidence: matched.assertions.map(a => ({
-        value: a.value,
-        sourceType: a.sourceType,
-        sourceLabel: a.sourceLabel,
-        sourceReference: a.sourceReference,
-        recordedAt: a.recordedAt,
-      })),
-    };
-  }
-
-  const selectedAssertion = matched.status === 'resolved'
-    ? matched.assertions.find(a => a.id === matched.selectedAssertionId) || matched.assertions[0]
-    : matched.assertions[0];
-
+export async function queryFacts(
+  query: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<QueryResult> {
+  const response = await request<{
+    status: QueryResult['status'];
+    answer: string | null;
+    entity?: string | null;
+    attribute?: string | null;
+    factId?: string | null;
+    message?: string | null;
+    evidence: QueryResult['evidence'];
+  }>('/query', {
+    method: 'POST',
+    body: JSON.stringify({ query }),
+    signal: options.signal,
+  });
   return {
-    status: 'supported',
-    answer: `${matched.attribute} is ${selectedAssertion.value}.`,
-    entity: matched.entity,
-    attribute: matched.attribute,
-    factId: matched.id,
-    evidence: matched.assertions.map(a => ({
-      value: a.value,
-      sourceType: a.sourceType,
-      sourceLabel: a.sourceLabel,
-      sourceReference: a.sourceReference,
-      recordedAt: a.recordedAt,
-    })),
+    status: response.status,
+    answer: response.answer,
+    entity: response.entity ?? undefined,
+    attribute: response.attribute ?? undefined,
+    factId: response.factId ?? undefined,
+    message: response.message ?? undefined,
+    evidence: response.evidence,
   };
 }
 
-export function resetToDefaults(): void {
-  localStorage.removeItem(STORAGE_KEY);
+export async function healthCheck(options: { signal?: AbortSignal } = {}): Promise<{ status: string }> {
+  return request<{ status: string }>('/health', { signal: options.signal });
 }

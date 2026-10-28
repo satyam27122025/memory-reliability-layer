@@ -19,6 +19,7 @@ export const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
 
 export interface FactAssertion {
   id: string;
+  version?: number;
   value: string;
   sourceType: SourceType;
   sourceLabel: string;
@@ -34,6 +35,7 @@ export interface FactHistoryEvent {
   description: string;
   assertionId?: string;
   reason?: string;
+  resolvedBy?: string;
 }
 
 export interface Fact {
@@ -64,12 +66,13 @@ export interface CreateFactInput {
 
 export interface ResolveFactInput {
   selectedAssertionId: string;
+  assertionVersion?: number;
   resolutionReason: string;
   resolvedBy: string;
 }
 
 export interface QueryResult {
-  status: 'supported' | 'conflict' | 'not_found';
+  status: 'supported' | 'conflict' | 'resolved' | 'ambiguous' | 'not_found';
   answer: string | null;
   entity?: string;
   attribute?: string;
@@ -81,6 +84,7 @@ export interface QueryResult {
     recordedAt: string;
   }>;
   factId?: string;
+  message?: string;
 }
 
 export interface DashboardMetrics {

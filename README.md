@@ -1,7 +1,7 @@
 # Memory Reliability Layer for Business AI Agents
 
-> **Kernel Status:** Stage 2 of 3 Complete (FastAPI Backend, SQLite Persistence, Conflict Engine, 15 Automated Tests)  
-> **Workspace Context:** Demo workspace · Synthetic enterprise data  
+> **Kernel Status:** Stage 3 Integrated (React frontend connected to FastAPI and SQLite)
+> **Workspace Context:** API-backed local workspace
 > **Target Audience:** AI Engineers, Platform Leads, Operations & Reliability Teams  
 
 ---
@@ -42,7 +42,7 @@ The **Memory Reliability Layer** provides:
 │   │   │   └── query.py        # POST /query
 │   │   ├── main.py             # FastAPI application and lifespan table initialization
 │   │   └── seed_demo.py        # Idempotent development seed command
-│   ├── tests/                  # 15 automated pytest cases covering health, conflicts, queries, persistence
+│   ├── tests/                  # 24 automated pytest cases covering health, conflicts, queries, persistence
 │   ├── requirements.txt        # Backend dependencies
 │   ├── .env.example            # Backend configuration template
 │   └── README.md               # Backend-specific documentation
@@ -54,7 +54,7 @@ The **Memory Reliability Layer** provides:
     │   ├── facts/              # FactsTable, FactCard (mobile), AssertionList, HistoryTimeline, AddFactModal, ResolveConflictModal
     │   └── ui/                 # Button, Badge, Modal, Input, Select, EmptyState, Toast, Skeleton
     ├── pages/                  # OverviewPage, FactsPage, ConflictsPage, FactDetailPage
-    ├── services/memoryApi.ts   # Client service abstraction layer ready for Stage 3 FastAPI connection
+    ├── services/memoryApi.ts   # Central FastAPI adapter and response mapper
     └── types/facts.ts          # TypeScript types matching FastAPI Pydantic schemas
 ```
 
@@ -74,10 +74,32 @@ Interactive API documentation: **`http://127.0.0.1:8000/docs`**
 
 ### Terminal 2 — Frontend (React + Vite)
 ```powershell
-# In root directory
+# Set the backend origin (or copy .env.example to .env.local)
+$env:VITE_API_BASE_URL = "http://127.0.0.1:8000"
 npm run dev
 ```
 Frontend development console: **`http://localhost:5173`**
+
+### API source-of-truth mode
+
+The frontend uses the API by default. `VITE_API_BASE_URL` is read by the
+central adapter in `src/services/memoryApi.ts`; it defaults to
+`http://127.0.0.1:8000` and trailing slashes are removed. A failed request is
+shown as an error with retry; it never falls back to demo data. The old
+mock/localStorage data service and reset action have been removed from the
+application flow. `src/data/demoFacts.ts` is retained as unused sample data.
+
+The adapter maps FastAPI camelCase payloads to the frontend model, preserving
+assertion text verbatim, API status/detail errors, and `answer: null`.
+Successful mutations trigger a shared refresh event so affected pages and
+live counters reload. Resolution submits the selected assertion's
+`assertionVersion`. On HTTP 409, the dialog remains open, reloads the latest
+fact, clears the previous selection, and requires the operator to review the
+current assertions again. Conflict queries keep the answer unavailable;
+ambiguous queries ask for clarification and never choose a candidate.
+
+To persist the frontend URL, copy `.env.example` to `.env.local` and change
+the value as needed. Restart Vite after changing environment variables.
 
 ---
 
@@ -94,16 +116,21 @@ $env:PYTHONPATH = "d:\kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\backend"
 npm run build
 ```
 
+### Frontend tests
+```powershell
+npm test
+```
+
 ---
 
 ## 5. Stage Progress & Roadmap
 
 - [x] **Stage 1 (Frontend Experience):** Responsive developer dashboard, 3D topology visualization, facts explorer, conflict triage, fact detail with lineage history, mock data and service abstraction layer.
 - [x] **Stage 2 (Backend & Memory Engine):** FastAPI service, SQLite persistence, immutable assertions, append-only history, deterministic conflict detection, resolution workflow, reopening rules, and 15 automated test cases.
-- [ ] **Stage 3 (Integration & Final MVP):** Connect frontend service layer (`memoryApi.ts`) to live FastAPI endpoints, remove mock service from production flow, add loading/empty/error states for network requests, end-to-end user journey testing, demo script preparation.
+- [x] **Stage 3 (Integration):** Connect the frontend to live FastAPI endpoints, remove mock/localStorage behavior from the app flow, add request/loading/error states, and verify core browser workflows against SQLite.
 
 ---
 
 ## 6. Official Status Declaration
 
-> *Stage 2 implements the local FastAPI and SQLite memory reliability engine with immutable assertions, history, deterministic conflict detection, explicit resolution, and automated tests. It is not yet integrated with the Stage 1 frontend and is not production-ready.*
+> *The React app uses the FastAPI/SQLite service as its source of truth. See [Stage 3 verification](./docs/stage-3-verification.md) for executed tests and browser evidence. Local development integration is verified; this does not imply production deployment readiness.*

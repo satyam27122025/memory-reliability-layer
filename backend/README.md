@@ -50,7 +50,7 @@ Once running:
 
 ## 4. Running Automated Tests
 
-Run the full 15-test test suite using an isolated SQLite in-memory database:
+Run the full 24-test suite using isolated SQLite test databases:
 
 ```powershell
 $env:PYTHONPATH = "d:\kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\backend"
@@ -166,4 +166,3 @@ curl -X POST http://127.0.0.1:8000/facts/fact-001/resolve \
    - If the new value matches the resolved assertion, it remains `resolved`.
    - If the new value contradicts the resolved assertion, the fact is **reopened** to `status: conflict`, clearing the active resolution and logging a new `conflict_detected` event.
 3. **Immutability:** Assertions are never deleted or modified; unselected assertions remain accessible in the database and API responses for audit lineage.
-

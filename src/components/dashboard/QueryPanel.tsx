@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { queryFacts } from '../../services/memoryApi';
 import type { QueryResult } from '../../types/facts';
@@ -6,6 +6,7 @@ import { SOURCE_TYPE_LABELS } from '../../types/facts';
 import { formatDateTime } from '../../lib/formatting';
 import { Terminal, Search, AlertTriangle, ShieldCheck, HelpCircle, ArrowRight, CornerDownLeft } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { getRequestErrorMessage } from '../ui/RequestNotice';
 
 interface QueryPanelProps {
   onResolveConflict?: (factId: string) => void;
@@ -22,19 +23,32 @@ export function QueryPanel({ onResolveConflict }: QueryPanelProps) {
   const [queryText, setQueryText] = useState("What is Acme Corporation's delivery date?");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [error, setError] = useState('');
+  const controllerRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => () => controllerRef.current?.abort(), []);
 
   const handleQuery = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!queryText.trim()) return;
 
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const requestId = ++requestIdRef.current;
     setLoading(true);
+    setError('');
     try {
-      const res = await queryFacts(queryText.trim());
-      setResult(res);
+      const res = await queryFacts(queryText.trim(), { signal: controller.signal });
+      if (requestId === requestIdRef.current) setResult(res);
     } catch (err) {
-      console.error('Query execution error:', err);
+      if (!controller.signal.aborted && requestId === requestIdRef.current) {
+        setResult(null);
+        setError(getRequestErrorMessage(err));
+      }
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   };
 
@@ -102,6 +116,15 @@ export function QueryPanel({ onResolveConflict }: QueryPanelProps) {
           ))}
         </div>
       </form>
+
+      {error && (
+        <div role="alert" className="p-3 bg-error-50 text-error-700 border border-error-200 rounded-md text-xs">
+          {error}
+          <button type="button" className="ml-2 underline font-semibold" onClick={() => void handleQuery()}>
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Result Area */}
       {result && (
@@ -186,13 +209,13 @@ export function QueryPanel({ onResolveConflict }: QueryPanelProps) {
           )}
 
           {/* Supported Result */}
-          {result.status === 'supported' && (
+          {(result.status === 'supported' || result.status === 'resolved') && (
             <div className="p-4 rounded-lg bg-resolved-50/50 border border-resolved-200 space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded text-xs font-mono font-semibold bg-resolved-100 text-resolved-800 border border-resolved-300 flex items-center gap-1.5">
                     <ShieldCheck size={13} className="text-resolved-600" />
-                    Status: Supported
+                    Status: {result.status === 'resolved' ? 'Resolved' : 'Supported'}
                   </span>
                   {result.entity && (
                     <span className="text-xs font-mono text-surface-600 hidden sm:inline">
@@ -215,7 +238,7 @@ export function QueryPanel({ onResolveConflict }: QueryPanelProps) {
               <div>
                 <div className="text-xs text-surface-700 font-semibold mb-0.5">Deterministic Answer:</div>
                 <div className="text-sm font-mono text-surface-900 font-semibold bg-white p-2.5 rounded border border-surface-200">
-                  {result.answer}
+                  {result.answer ?? 'Answer unavailable'}
                 </div>
               </div>
 
@@ -253,6 +276,25 @@ export function QueryPanel({ onResolveConflict }: QueryPanelProps) {
               <p className="text-xs text-surface-600">
                 No source-backed fact was found for this query in the current workspace. The agent will not invent or hallucinate answers.
               </p>
+            </div>
+          )}
+
+          {result.status === 'ambiguous' && (
+            <div role="status" className="p-4 rounded-lg bg-amber-50 border border-amber-200 space-y-2">
+              <div className="text-xs font-mono font-semibold text-amber-900">Status: Ambiguous query</div>
+              <p className="text-xs text-amber-800">
+                {result.message || 'Multiple facts matched. Please clarify the entity or attribute.'}
+              </p>
+              {result.evidence.length > 0 && (
+                <div className="space-y-1">
+                  {result.evidence.map((candidate, index) => (
+                    <p key={`${candidate.sourceReference}-${index}`} className="text-xs text-surface-700">
+                      {candidate.value} · {candidate.sourceLabel}
+                    </p>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs font-semibold text-amber-900">No answer was selected.</p>
             </div>
           )}
         </div>

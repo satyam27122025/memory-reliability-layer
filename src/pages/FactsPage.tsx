@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { listFacts } from '../services/memoryApi';
 import type { Fact } from '../types/facts';
+import { useFacts } from '../hooks/useFacts';
 import { FactsTable } from '../components/facts/FactsTable';
 import { ResolveConflictModal } from '../components/facts/ResolveConflictModal';
 import { SkeletonTable } from '../components/ui/Skeleton';
 import { Database, Plus } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import { RequestNotice } from '../components/ui/RequestNotice';
 
 interface AppContextType {
   refreshMetrics: () => Promise<void>;
@@ -16,25 +17,9 @@ interface AppContextType {
 
 export function FactsPage() {
   const { refreshMetrics, addToast, openAddFactModal } = useOutletContext<AppContextType>();
-  const [facts, setFacts] = useState<Fact[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { facts, loading, error, refresh: loadData } = useFacts();
   const [selectedFact, setSelectedFact] = useState<Fact | null>(null);
   const [isResolveOpen, setIsResolveOpen] = useState(false);
-
-  const loadData = async () => {
-    try {
-      const data = await listFacts();
-      setFacts(data);
-    } catch (err) {
-      console.error('Failed to load facts:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
 
   const handleResolveClick = (fact: Fact) => {
     setSelectedFact(fact);
@@ -78,18 +63,20 @@ export function FactsPage() {
         </Button>
       </div>
 
+      {error ? <RequestNotice error={error} onRetry={() => void loadData()} /> : null}
+
       {/* Main Table */}
       {loading ? (
         <div className="card p-6">
           <SkeletonTable rows={6} />
         </div>
-      ) : (
+      ) : !error ? (
         <FactsTable
           facts={facts}
           onResolveClick={handleResolveClick}
           onAddFactClick={openAddFactModal}
         />
-      )}
+      ) : null}
 
       {/* Resolve Modal */}
       <ResolveConflictModal
@@ -101,4 +88,3 @@ export function FactsPage() {
     </div>
   );
 }
-

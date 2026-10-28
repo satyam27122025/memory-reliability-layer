@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
-import { getFact } from '../services/memoryApi';
+import { getFact, getFactHistory, ApiError } from '../services/memoryApi';
 import type { Fact } from '../types/facts';
 import { FactStatusBadge } from '../components/facts/FactStatusBadge';
 import { AssertionList } from '../components/facts/AssertionList';
@@ -9,6 +9,7 @@ import { ResolveConflictModal } from '../components/facts/ResolveConflictModal';
 import { Button } from '../components/ui/Button';
 import { formatDateTime } from '../lib/formatting';
 import { ArrowLeft, AlertTriangle, ShieldCheck, Clock, Layers, Hash } from 'lucide-react';
+import { RequestNotice } from '../components/ui/RequestNotice';
 
 interface AppContextType {
   refreshMetrics: () => Promise<void>;
@@ -20,26 +21,51 @@ export function FactDetailPage() {
   const { refreshMetrics, addToast } = useOutletContext<AppContextType>();
   const [fact, setFact] = useState<Fact | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [isResolveOpen, setIsResolveOpen] = useState(false);
+  const requestRef = useRef<AbortController | null>(null);
 
-  const loadFact = async () => {
+  const loadFact = useCallback(async (signal?: AbortSignal, showLoading = true) => {
     if (!id) return;
+    if (showLoading) setLoading(true);
+    setError(null);
     try {
-      const data = await getFact(id);
-      setFact(data);
-    } catch (err) {
-      console.error('Failed to load fact:', err);
+      const [data, history] = await Promise.all([
+        getFact(id, { signal }),
+        getFactHistory(id, { signal }),
+      ]);
+      if (!signal?.aborted) setFact({ ...data, history });
+    } catch (requestError) {
+      if (!signal?.aborted) {
+        setFact(null);
+        setError(requestError);
+      }
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadFact();
   }, [id]);
 
+  useEffect(() => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    void loadFact(controller.signal);
+    const onChanged = () => {
+      requestRef.current?.abort();
+      const refreshController = new AbortController();
+      requestRef.current = refreshController;
+      void loadFact(refreshController.signal, false);
+    };
+    window.addEventListener('memory:facts-changed', onChanged);
+    return () => {
+      controller.abort();
+      requestRef.current?.abort();
+      window.removeEventListener('memory:facts-changed', onChanged);
+    };
+  }, [id, loadFact]);
+
   const handleFactResolved = async (updated: Fact) => {
-    setFact(updated);
+    await loadFact(undefined, false);
     await refreshMetrics();
     addToast({
       type: 'success',
@@ -58,7 +84,7 @@ export function FactDetailPage() {
     );
   }
 
-  if (!fact) {
+  if (error instanceof ApiError && error.status === 404) {
     return (
       <div className="p-8 max-w-5xl mx-auto text-center space-y-4">
         <h2 className="text-base font-semibold text-surface-900">Fact Record Not Found</h2>
@@ -71,6 +97,16 @@ export function FactDetailPage() {
       </div>
     );
   }
+
+  if (error) {
+    return (
+      <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto">
+        <RequestNotice error={error} onRetry={() => void loadFact()} />
+        <Link to="/facts" className="inline-block mt-4 text-xs text-accent-700 hover:underline">Back to Facts Explorer</Link>
+      </div>
+    );
+  }
+  if (!fact) return null;
 
   const isConflict = fact.status === 'conflict';
   const isResolved = fact.status === 'resolved';
@@ -199,4 +235,3 @@ export function FactDetailPage() {
     </div>
   );
 }
-

@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
-import { resolveFact } from '../../services/memoryApi';
+import { getFact, resolveFact, ApiError } from '../../services/memoryApi';
 import { formatDateTime } from '../../lib/formatting';
 import { SOURCE_TYPE_LABELS, type Fact, type ResolveFactInput } from '../../types/facts';
 import { CheckCircle2, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { getRequestErrorMessage } from '../ui/RequestNotice';
 
 interface ResolveConflictModalProps {
   isOpen: boolean;
@@ -25,18 +26,23 @@ export function ResolveConflictModal({
   const [resolvedBy, setResolvedBy] = useState<string>('Priya Sharma');
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [displayFact, setDisplayFact] = useState<Fact | null>(fact);
+  const [latestRevisionNotice, setLatestRevisionNotice] = useState('');
 
   React.useEffect(() => {
     if (isOpen && fact) {
+      setDisplayFact(fact);
       // Don't auto-pick a default to force explicit authority declaration
       setSelectedAssertionId(fact.selectedAssertionId || '');
       setResolutionReason('');
       setResolvedBy('Priya Sharma');
       setError('');
+      setLatestRevisionNotice('');
     }
-  }, [isOpen, fact]);
+  }, [isOpen, fact?.id]);
 
-  if (!fact) return null;
+  const currentFact = displayFact || fact;
+  if (!currentFact) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,21 +60,32 @@ export function ResolveConflictModal({
     }
 
     setLoading(true);
+    setError('');
     try {
       const resolution: ResolveFactInput = {
         selectedAssertionId,
+        assertionVersion: currentFact.assertions.find(assertion => assertion.id === selectedAssertionId)?.version,
         resolutionReason: resolutionReason.trim(),
         resolvedBy: resolvedBy.trim(),
       };
 
-      const updated = await resolveFact(fact.id, resolution);
-      if (updated) {
-        onFactResolved(updated);
-        onClose();
-      }
+      const updated = await resolveFact(currentFact.id, resolution);
+      onFactResolved(updated);
+      onClose();
     } catch (err) {
-      console.error('Failed to resolve conflict:', err);
-      setError('Failed to record resolution. Please try again.');
+      if (err instanceof ApiError && err.status === 409) {
+        try {
+          const latest = await getFact(currentFact.id);
+          setDisplayFact(latest);
+          setSelectedAssertionId('');
+          setLatestRevisionNotice('This fact changed after you opened the dialog. Review the latest assertions and select again before resolving.');
+          window.dispatchEvent(new CustomEvent('memory:facts-changed'));
+        } catch (refreshError) {
+          setError(`The fact changed, but the latest version could not be loaded: ${getRequestErrorMessage(refreshError)}`);
+        }
+      } else {
+        setError(getRequestErrorMessage(err));
+      }
     } finally {
       setLoading(false);
     }
@@ -79,7 +96,7 @@ export function ResolveConflictModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Resolve Fact Conflict"
-      subtitle={`Establish human authority for ${fact.entity} · ${fact.attribute}`}
+      subtitle={`Establish human authority for ${currentFact.entity} · ${currentFact.attribute}`}
       size="lg"
     >
       <form onSubmit={handleSubmit} className="space-y-5">
@@ -87,10 +104,16 @@ export function ResolveConflictModal({
           <AlertTriangle size={18} className="text-conflict-600 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-conflict-900 leading-relaxed">
             <span className="font-semibold">Notice:</span> Multiple sources disagree on the value of{' '}
-            <span className="font-mono font-medium">{fact.attribute}</span>. Selecting an authoritative value
+            <span className="font-mono font-medium">{currentFact.attribute}</span>. Selecting an authoritative value
             will mark this fact as <strong>Resolved</strong> while preserving all historical assertions for auditability.
           </div>
         </div>
+
+        {latestRevisionNotice && (
+          <div role="status" className="p-3 bg-amber-50 text-amber-900 border border-amber-200 rounded-md text-xs">
+            {latestRevisionNotice}
+          </div>
+        )}
 
         {/* Assertion Selection */}
         <div className="space-y-2.5">
@@ -99,7 +122,7 @@ export function ResolveConflictModal({
           </label>
 
           <div className="space-y-2">
-            {fact.assertions.map((assertion, idx) => {
+            {currentFact.assertions.map((assertion, idx) => {
               const isSelected = selectedAssertionId === assertion.id;
               return (
                 <div
@@ -130,7 +153,7 @@ export function ResolveConflictModal({
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-mono font-semibold text-surface-500">
-                            Assertion #{idx + 1}
+                            Assertion #{idx + 1} · Revision {assertion.version ?? 1}
                           </span>
                           <span className="text-xs font-mono px-2 py-0.5 rounded bg-surface-100 text-surface-700 border border-surface-200">
                             {SOURCE_TYPE_LABELS[assertion.sourceType]}
@@ -200,7 +223,7 @@ export function ResolveConflictModal({
         </div>
 
         {error && (
-          <div className="p-2.5 bg-error-50 text-error-700 border border-error-200 rounded-md text-xs">
+          <div role="alert" className="p-2.5 bg-error-50 text-error-700 border border-error-200 rounded-md text-xs">
             {error}
           </div>
         )}
@@ -209,7 +232,7 @@ export function ResolveConflictModal({
           <Button type="button" variant="secondary" onClick={onClose} disabled={loading}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={loading} className="gap-1.5">
+          <Button type="submit" variant="primary" loading={loading} disabled={currentFact.status !== 'conflict'} className="gap-1.5">
             <ShieldCheck size={16} />
             <span>Confirm Resolution</span>
           </Button>

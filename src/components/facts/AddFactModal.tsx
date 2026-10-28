@@ -4,12 +4,13 @@ import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { Button } from '../ui/Button';
 import { createFact } from '../../services/memoryApi';
-import type { SourceType, CreateFactInput } from '../../types/facts';
+import type { Fact, SourceType, CreateFactInput } from '../../types/facts';
+import { getRequestErrorMessage } from '../ui/RequestNotice';
 
 interface AddFactModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onFactCreated: () => void;
+  onFactCreated: (fact: Fact) => void;
   initialEntity?: string;
   initialAttribute?: string;
 }
@@ -40,10 +41,12 @@ export function AddFactModal({
   const [notes, setNotes] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const [requestError, setRequestError] = useState('');
 
   // Sync props when opened
   React.useEffect(() => {
     if (isOpen) {
+      setRequestError('');
       if (initialEntity) setEntity(initialEntity);
       if (initialAttribute) setAttribute(initialAttribute);
       if (!sourceLabel) {
@@ -70,11 +73,12 @@ export function AddFactModal({
     if (!validate()) return;
 
     setLoading(true);
+    setRequestError('');
     try {
       const input: CreateFactInput = {
         entity: entity.trim(),
         attribute: attribute.trim(),
-        value: value.trim(),
+        value,
         sourceType,
         sourceLabel: sourceLabel.trim(),
         sourceReference: sourceReference.trim() || `ref-${Date.now().toString(36)}`,
@@ -82,8 +86,8 @@ export function AddFactModal({
         notes: notes.trim() || undefined,
       };
 
-      await createFact(input);
-      onFactCreated();
+      const created = await createFact(input);
+      onFactCreated(created);
       onClose();
       // Reset form
       setEntity('');
@@ -92,7 +96,7 @@ export function AddFactModal({
       setNotes('');
       setErrors({});
     } catch (err) {
-      console.error('Failed to create fact:', err);
+      setRequestError(getRequestErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -107,6 +111,11 @@ export function AddFactModal({
       size="lg"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {requestError && (
+          <div role="alert" className="p-3 bg-error-50 text-error-700 border border-error-200 rounded-md text-xs">
+            {requestError}
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
             label="Entity"
@@ -209,4 +218,3 @@ export function AddFactModal({
     </Modal>
   );
 }
-

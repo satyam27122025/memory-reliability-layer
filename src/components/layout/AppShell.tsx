@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { ToastContainer, type ToastData } from '../ui/Toast';
 import { AddFactModal } from '../facts/AddFactModal';
-import { listFacts, resetToDefaults } from '../../services/memoryApi';
+import { listFacts } from '../../services/memoryApi';
+import type { Fact } from '../../types/facts';
 
 export interface AppShellContext {
   refreshMetrics: () => Promise<void>;
@@ -19,20 +20,36 @@ export function AppShell() {
   const [resolvedFacts, setResolvedFacts] = useState(0);
   const [toasts, setToasts] = useState<ToastData[]>([]);
   const [isAddFactOpen, setIsAddFactOpen] = useState(false);
+  const metricsController = useRef<AbortController | null>(null);
 
   const refreshMetrics = useCallback(async () => {
+    metricsController.current?.abort();
+    const controller = new AbortController();
+    metricsController.current = controller;
     try {
-      const facts = await listFacts();
+      const facts = await listFacts({ signal: controller.signal });
+      if (controller.signal.aborted) return;
       setTotalFacts(facts.length);
       setActiveConflicts(facts.filter(f => f.status === 'conflict').length);
       setResolvedFacts(facts.filter(f => f.status === 'resolved').length);
     } catch (err) {
+      if (controller.signal.aborted) return;
       console.error('Failed to refresh metrics:', err);
+      setTotalFacts(0);
+      setActiveConflicts(0);
+      setResolvedFacts(0);
     }
   }, []);
 
   useEffect(() => {
     refreshMetrics();
+    return () => metricsController.current?.abort();
+  }, [refreshMetrics]);
+
+  useEffect(() => {
+    const refresh = () => { void refreshMetrics(); };
+    window.addEventListener('memory:facts-changed', refresh);
+    return () => window.removeEventListener('memory:facts-changed', refresh);
   }, [refreshMetrics]);
 
   const addToast = (toast: Omit<ToastData, 'id'>) => {
@@ -44,24 +61,12 @@ export function AppShell() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  const handleResetData = async () => {
-    resetToDefaults();
-    await refreshMetrics();
-    addToast({
-      type: 'info',
-      title: 'Mock Data Reset',
-      description: 'Central mock dataset reseeded to default initial state.',
-    });
-    // Trigger window reload or state refresh
-    window.location.reload();
-  };
-
-  const handleFactCreated = async () => {
+  const handleFactCreated = async (fact: Fact) => {
     await refreshMetrics();
     addToast({
       type: 'success',
-      title: 'Fact Recorded',
-      description: 'New assertion logged to workspace memory layer.',
+      title: fact.status === 'conflict' ? 'Assertion Added — Conflict Detected' : 'Fact Recorded',
+      description: `${fact.entity} · ${fact.attribute} is ${fact.status}.`,
     });
   };
 
@@ -81,7 +86,6 @@ export function AppShell() {
         <TopBar
           onMenuClick={() => setSidebarOpen(true)}
           onOpenAddFact={() => setIsAddFactOpen(true)}
-          onResetData={handleResetData}
           activeConflicts={activeConflicts}
         />
 
@@ -108,4 +112,3 @@ export function AppShell() {
     </div>
   );
 }
-

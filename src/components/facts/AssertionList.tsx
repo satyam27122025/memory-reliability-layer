@@ -47,6 +47,9 @@ export function AssertionList({
                   <span className="text-xxs font-mono uppercase tracking-wider text-surface-500 font-semibold">
                     Assertion #{index + 1}
                   </span>
+                  <span className="text-xxs font-mono text-surface-400">
+                    Revision {assertion.version ?? 1}
+                  </span>
                   
                   <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-surface-100 text-surface-700 border border-surface-200">
                     {sourceIcons[assertion.sourceType]}
@@ -109,4 +112,3 @@ export function AssertionList({
     </div>
   );
 }
-

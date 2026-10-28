@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useOutletContext, Link } from 'react-router-dom';
-import { listFacts } from '../services/memoryApi';
 import type { Fact } from '../types/facts';
+import { useFacts } from '../hooks/useFacts';
 import { SOURCE_TYPE_LABELS } from '../types/facts';
 import { formatDateTime } from '../lib/formatting';
 import { ResolveConflictModal } from '../components/facts/ResolveConflictModal';
@@ -9,6 +9,7 @@ import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/Skeleton';
 import { AlertTriangle, ShieldCheck, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { RequestNotice } from '../components/ui/RequestNotice';
 
 interface AppContextType {
   refreshMetrics: () => Promise<void>;
@@ -17,26 +18,10 @@ interface AppContextType {
 
 export function ConflictsPage() {
   const { refreshMetrics, addToast } = useOutletContext<AppContextType>();
-  const [facts, setFacts] = useState<Fact[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { facts, loading, error, refresh: loadData } = useFacts();
   const [selectedFact, setSelectedFact] = useState<Fact | null>(null);
   const [isResolveOpen, setIsResolveOpen] = useState(false);
   const [tab, setTab] = useState<'active' | 'resolved'>('active');
-
-  const loadData = async () => {
-    try {
-      const data = await listFacts();
-      setFacts(data);
-    } catch (err) {
-      console.error('Failed to load facts:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
 
   const activeConflicts = facts.filter(f => f.status === 'conflict');
   const resolvedConflicts = facts.filter(f => f.status === 'resolved');
@@ -72,6 +57,8 @@ export function ConflictsPage() {
       </div>
 
       {/* Metric Counters & Warning banner */}
+      {error ? <RequestNotice error={error} onRetry={() => void loadData()} /> : null}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="card p-4 flex items-center justify-between border-l-4 border-l-conflict-500">
           <div>
@@ -140,7 +127,7 @@ export function ConflictsPage() {
         <div className="card p-6">
           <SkeletonTable rows={4} />
         </div>
-      ) : (
+      ) : error ? null : (
         <>
           {tab === 'active' && (
             <div className="space-y-4">

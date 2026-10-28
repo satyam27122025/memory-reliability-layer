@@ -30,16 +30,16 @@ export function Sidebar({ isOpen, onClose, activeConflicts, totalFacts, resolved
               Memory Reliability
             </h1>
             <p className="text-xxs font-mono text-surface-500 tracking-wider uppercase mt-0.5">
-              Kernel v0.1.0 · Stage 1
+              Kernel v0.1.0 · Stage 3
             </p>
           </div>
         </div>
 
         {/* Workspace Pill */}
         <div className="mt-3.5 px-2.5 py-1.5 rounded bg-surface-900/80 border border-surface-800/80 flex items-center justify-between">
-          <span className="text-xs text-surface-300 font-medium truncate">Demo workspace</span>
+          <span className="text-xs text-surface-300 font-medium truncate">API workspace</span>
           <span className="text-xxs font-mono text-accent-400 bg-accent-500/10 px-1.5 py-0.5 rounded border border-accent-400/20">
-            Synthetic
+            SQLite
           </span>
         </div>
       </div>
