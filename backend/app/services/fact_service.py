@@ -1,6 +1,7 @@
 import uuid
+from functools import wraps
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, ParamSpec, Tuple, TypeVar
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, desc, asc
 
@@ -8,6 +9,21 @@ from app.models import Fact, FactAssertion, FactHistory
 from app.schemas import FactCreate, FactResolveInput, FactUpdate
 from app.services.normalization import normalize_text, normalize_value
 from app.services.conflict_service import detect_conflict_status
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def _rollback_on_error(operation: Callable[P, R]) -> Callable[P, R]:
+    @wraps(operation)
+    def wrapped(db: Session, *args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return operation(db, *args, **kwargs)
+        except Exception:
+            db.rollback()
+            raise
+
+    return wrapped
 
 
 def generate_id(prefix: str) -> str:
@@ -77,6 +93,7 @@ def list_facts(
     return facts, total
 
 
+@_rollback_on_error
 def create_or_add_assertion(db: Session, fact_in: FactCreate) -> Fact:
     entity = _require_text(fact_in.entity, "Entity")
     attribute = _require_text(fact_in.attribute, "Attribute")
@@ -93,6 +110,8 @@ def create_or_add_assertion(db: Session, fact_in: FactCreate) -> Fact:
     norm_attr = normalize_text(attribute)
 
     recorded_at = fact_in.recorded_at or now
+    if recorded_at.tzinfo is None:
+        recorded_at = recorded_at.replace(tzinfo=timezone.utc)
 
     # Check for existing fact record with the same normalized pair
     fact = (
@@ -125,6 +144,7 @@ def create_or_add_assertion(db: Session, fact_in: FactCreate) -> Fact:
         assertion = FactAssertion(
             id=assertion_id,
             fact_id=fact.id,
+            assertion_version=1,
             value=value,
             source_type=source_type,
             source_label=source_label,
@@ -163,6 +183,7 @@ def create_or_add_assertion(db: Session, fact_in: FactCreate) -> Fact:
     new_assertion = FactAssertion(
         id=assertion_id,
         fact_id=fact.id,
+        assertion_version=len(fact.assertions) + 1,
         value=value,
         source_type=source_type,
         source_label=source_label,
@@ -248,6 +269,7 @@ def create_or_add_assertion(db: Session, fact_in: FactCreate) -> Fact:
     return fact
 
 
+@_rollback_on_error
 def resolve_fact(db: Session, fact_id: str, resolve_in: FactResolveInput) -> Fact:
     fact = get_fact(db, fact_id)
     if not fact:
@@ -263,6 +285,9 @@ def resolve_fact(db: Session, fact_id: str, resolve_in: FactResolveInput) -> Fac
     assertion = next((a for a in fact.assertions if a.id == resolve_in.selected_assertion_id), None)
     if not assertion:
         raise ValueError("The selected assertion does not belong to this fact.")
+
+    if resolve_in.assertion_version is not None and assertion.assertion_version != resolve_in.assertion_version:
+        raise ValueError("This assertion version is stale and has been updated.")
 
     now = datetime.now(timezone.utc)
     fact.status = "resolved"
@@ -288,24 +313,54 @@ def resolve_fact(db: Session, fact_id: str, resolve_in: FactResolveInput) -> Fac
     return fact
 
 
+@_rollback_on_error
 def update_fact(db: Session, fact_id: str, update_in: FactUpdate) -> Fact:
     """Add a new assertion to an existing fact while preserving all historical data."""
     fact = get_fact(db, fact_id)
     if not fact:
         raise ValueError("Fact not found.")
 
-    if update_in.value:
-        fact_create = FactCreate(
-            entity=fact.entity,
-            attribute=fact.attribute,
-            value=update_in.value,
-            source_type=update_in.source_type or "manual_entry",
-            source_label=update_in.source_label or "Updated record",
-            source_reference=update_in.source_reference,
-            recorded_at=update_in.recorded_at,
-            notes=update_in.notes,
-        )
-        return create_or_add_assertion(db, fact_create)
+    if update_in.value is None:
+        return fact
 
-    return fact
+    candidate_value = update_in.value
+    if not candidate_value.strip():
+        raise ValueError("Value is required.")
 
+    if update_in.assertion_id:
+        matching_assertion = next((a for a in fact.assertions if a.id == update_in.assertion_id), None)
+        if matching_assertion is None:
+            raise ValueError("The selected assertion does not belong to this fact.")
+        if update_in.assertion_version is not None and matching_assertion.assertion_version != update_in.assertion_version:
+            raise ValueError("This assertion version is stale and has been updated.")
+
+        same_value = matching_assertion.value == candidate_value
+        same_source_type = update_in.source_type is None or update_in.source_type.strip() == matching_assertion.source_type
+        same_source_label = update_in.source_label is None or update_in.source_label.strip() == matching_assertion.source_label
+        same_source_reference = update_in.source_reference is None or update_in.source_reference.strip() == matching_assertion.source_reference
+        same_notes = update_in.notes is None or update_in.notes == matching_assertion.notes
+        same_recorded_at = update_in.recorded_at is None or update_in.recorded_at == matching_assertion.recorded_at
+
+        if (
+            same_value
+            and same_source_type
+            and same_source_label
+            and same_source_reference
+            and same_notes
+            and same_recorded_at
+        ):
+            return fact
+
+        raise ValueError("This assertion ID conflicts with different content and cannot be updated.")
+
+    fact_create = FactCreate(
+        entity=fact.entity,
+        attribute=fact.attribute,
+        value=candidate_value,
+        source_type=update_in.source_type or "manual_entry",
+        source_label=update_in.source_label or "Updated record",
+        source_reference=update_in.source_reference,
+        recorded_at=update_in.recorded_at,
+        notes=update_in.notes,
+    )
+    return create_or_add_assertion(db, fact_create)

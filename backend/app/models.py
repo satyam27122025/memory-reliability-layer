@@ -6,6 +6,7 @@ from sqlalchemy import (
     ForeignKey,
     UniqueConstraint,
     Index,
+    Integer,
     Text,
 )
 from sqlalchemy.orm import relationship
@@ -59,6 +60,7 @@ class FactAssertion(Base):
 
     id = Column(String(64), primary_key=True, index=True)
     fact_id = Column(String(64), ForeignKey("facts.id", ondelete="CASCADE"), nullable=False, index=True)
+    assertion_version = Column(Integer, nullable=False, default=1)
     value = Column(Text, nullable=False)
     source_type = Column(String(64), nullable=False)
     source_label = Column(String(255), nullable=False)

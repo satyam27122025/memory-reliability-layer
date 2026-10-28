@@ -30,6 +30,15 @@ if settings.DATABASE_URL.startswith("sqlite"):
     def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        table_info = cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='fact_assertions'"
+        ).fetchone()
+        if table_info:
+            columns = [row[1] for row in cursor.execute("PRAGMA table_info(fact_assertions)").fetchall()]
+            if "assertion_version" not in columns:
+                cursor.execute(
+                    "ALTER TABLE fact_assertions ADD COLUMN assertion_version INTEGER NOT NULL DEFAULT 1"
+                )
         cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -43,4 +52,3 @@ def get_db():
         yield db
     finally:
         db.close()
-

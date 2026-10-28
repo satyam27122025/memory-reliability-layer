@@ -51,6 +51,10 @@ class FactAssertionCreate(FactAssertionBase):
 
 class FactAssertionOut(FactAssertionBase):
     id: str
+    assertion_version: int = Field(
+        1,
+        validation_alias=AliasChoices("assertion_version", "assertionVersion")
+    )
     created_at: datetime = Field(
         ...,
         validation_alias=AliasChoices("created_at", "createdAt")
@@ -103,6 +107,14 @@ class FactCreate(CamelModel):
 
 class FactUpdate(CamelModel):
     """Optional update / new assertion payload."""
+    assertion_id: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("assertion_id", "assertionId")
+    )
+    assertion_version: Optional[int] = Field(
+        None,
+        validation_alias=AliasChoices("assertion_version", "assertionVersion")
+    )
     value: Optional[str] = None
     source_type: Optional[str] = Field(
         None,
@@ -127,6 +139,10 @@ class FactResolveInput(CamelModel):
     selected_assertion_id: str = Field(
         ...,
         validation_alias=AliasChoices("selected_assertion_id", "selectedAssertionId", "assertion_id", "assertionId")
+    )
+    assertion_version: Optional[int] = Field(
+        None,
+        validation_alias=AliasChoices("assertion_version", "assertionVersion")
     )
     resolution_reason: str = Field(
         ...,
@@ -211,7 +227,7 @@ class EvidenceItem(CamelModel):
 
 
 class QueryResultOut(CamelModel):
-    status: Literal["supported", "conflict", "resolved", "not_found"]
+    status: Literal["supported", "conflict", "resolved", "not_found", "ambiguous"]
     answer: Optional[str] = None
     entity: Optional[str] = None
     attribute: Optional[str] = None
@@ -225,4 +241,3 @@ class QueryResultOut(CamelModel):
 
 class HealthResponse(CamelModel):
     status: str = "ok"
-

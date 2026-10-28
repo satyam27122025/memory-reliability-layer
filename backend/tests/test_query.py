@@ -112,3 +112,22 @@ def test_query_not_found(client):
     assert "No source-backed fact was found" in data["message"]
     assert len(data["evidence"]) == 0
 
+
+def test_query_with_equally_relevant_facts_is_ambiguous(client):
+    for entity, value in (("Northwind", "Active"), ("Contoso", "Pending")):
+        response = client.post("/facts", json={
+            "entity": entity,
+            "attribute": "Review status",
+            "value": value,
+            "sourceType": "manual_entry",
+            "sourceLabel": entity,
+            "sourceReference": f"{entity}-review",
+        })
+        assert response.status_code == 201
+
+    response = client.post("/query", json={"query": "Review status"})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "ambiguous"
+    assert result["answer"] is None
+    assert "Multiple equally relevant facts" in result["message"]

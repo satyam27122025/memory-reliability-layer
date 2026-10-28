@@ -1,6 +1,9 @@
 import pytest
 from datetime import datetime, timezone
+from sqlalchemy import event, text
+from sqlalchemy.exc import IntegrityError
 
+from app.models import Fact
 
 def test_health_check(client):
     """TEST 1: GET /health returns status ok."""
@@ -155,6 +158,113 @@ def test_list_filters(client):
     assert res_search.json()["total"] == 1
 
 
+def test_list_sorting(client):
+    for entity in ("Zulu Inc", "Alpha Inc"):
+        response = client.post("/facts", json={
+            "entity": entity,
+            "attribute": "Status",
+            "value": "Active",
+            "sourceType": "manual_entry",
+            "sourceLabel": entity,
+            "sourceReference": entity,
+        })
+        assert response.status_code == 201
+
+    response = client.get("/facts?sort=entity&order=asc")
+    assert response.status_code == 200
+    assert [fact["entity"] for fact in response.json()["facts"]] == ["Alpha Inc", "Zulu Inc"]
+
+
+def test_put_identical_payload_is_idempotent_and_different_payload_conflicts(client):
+    created = client.post("/facts", json={
+        "entity": "Contoso",
+        "attribute": "Status",
+        "value": "Active",
+        "sourceType": "manual_entry",
+        "sourceLabel": "Initial",
+        "sourceReference": "ref-1",
+    })
+    fact = created.json()
+    assertion_id = fact["assertions"][0]["id"]
+    payload = {
+        "assertionId": assertion_id,
+        "assertionVersion": 1,
+        "value": "Active",
+        "sourceType": "manual_entry",
+        "sourceLabel": "Initial",
+        "sourceReference": "ref-1",
+    }
+
+    first = client.put(f"/facts/{fact['id']}", json=payload)
+    second = client.put(f"/facts/{fact['id']}", json=payload)
+    assert first.status_code == second.status_code == 200
+    assert len(second.json()["assertions"]) == 1
+
+    changed = {**payload, "value": "Inactive"}
+    conflict = client.put(f"/facts/{fact['id']}", json=changed)
+    assert conflict.status_code == 409
+    unchanged = client.get(f"/facts/{fact['id']}").json()
+    assert len(unchanged["assertions"]) == 1
+    assert unchanged["assertions"][0]["value"] == "Active"
+
+
+def test_put_preserves_original_assertion_text(client):
+    created = client.post("/facts", json={
+        "entity": "Raw Text Co",
+        "attribute": "Status",
+        "value": "Active",
+        "sourceType": "manual_entry",
+        "sourceLabel": "Initial",
+        "sourceReference": "raw-1",
+    })
+    fact = created.json()
+    response = client.put(f"/facts/{fact['id']}", json={
+        "value": "  Reviewed  ",
+        "sourceType": "manual_entry",
+        "sourceLabel": "Update",
+        "sourceReference": "raw-2",
+    })
+    assert response.status_code == 200
+    assert response.json()["assertions"][-1]["value"] == "  Reviewed  "
+
+
+def test_multi_step_mutation_rolls_back_on_commit_failure(db_session):
+    from app.schemas import FactCreate
+    from app.services.fact_service import create_or_add_assertion
+
+    def fail_commit(_session):
+        raise RuntimeError("simulated commit failure")
+
+    event.listen(db_session, "before_commit", fail_commit)
+    with pytest.raises(RuntimeError, match="simulated commit failure"):
+        create_or_add_assertion(db_session, FactCreate(
+            entity="Rollback Co",
+            attribute="Status",
+            value="Active",
+            source_type="manual_entry",
+            source_label="Test",
+            source_reference="rollback-1",
+        ))
+
+    event.remove(db_session, "before_commit", fail_commit)
+    assert db_session.query(Fact).count() == 0
+
+
+def test_sqlite_foreign_keys_are_enabled(db_session):
+    assert db_session.connection().exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+    with pytest.raises(IntegrityError):
+        db_session.execute(
+            text(
+                "INSERT INTO fact_assertions "
+                "(id, fact_id, assertion_version, value, source_type, source_label, "
+                "source_reference, recorded_at, created_at) "
+                "VALUES ('orphan', 'missing-fact', 1, 'x', 'manual_entry', 'x', 'x', "
+                "'2026-01-01', '2026-01-01')"
+            )
+        )
+    db_session.rollback()
+
+
 def test_api_schema(client):
     """TEST 15: Verify that /docs and /openapi.json load successfully."""
     docs_res = client.get("/docs")
@@ -167,4 +277,3 @@ def test_api_schema(client):
     assert "/facts" in schema["paths"]
     assert "/query" in schema["paths"]
     assert "/health" in schema["paths"]
-

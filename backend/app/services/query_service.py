@@ -19,13 +19,13 @@ def query_facts(db: Session, query_str: str) -> QueryResultOut:
 
     best_fact: Optional[Fact] = None
     best_score = 0
+    has_tied_best_fact = False
 
     for fact in all_facts:
         score = 0
         norm_entity = fact.normalized_entity
         norm_attr = fact.normalized_attribute
 
-        # Highest priority: query matches both entity and attribute
         entity_in_q = norm_entity in q or q in norm_entity
         attr_in_q = norm_attr in q or q in norm_attr
 
@@ -38,7 +38,6 @@ def query_facts(db: Session, query_str: str) -> QueryResultOut:
         elif norm_attr in q or q in norm_attr:
             score = 30
         else:
-            # Check assertions values
             for a in fact.assertions:
                 if a.value and (normalize_text(a.value) in q or q in normalize_text(a.value)):
                     score = max(score, 20)
@@ -46,12 +45,23 @@ def query_facts(db: Session, query_str: str) -> QueryResultOut:
         if score > best_score:
             best_score = score
             best_fact = fact
+            has_tied_best_fact = False
+        elif score == best_score and score >= 20 and best_fact is not None:
+            has_tied_best_fact = True
 
     if not best_fact or best_score < 20:
         return QueryResultOut(
             status="not_found",
             answer=None,
             message="No source-backed fact was found for this query.",
+            evidence=[],
+        )
+
+    if has_tied_best_fact:
+        return QueryResultOut(
+            status="ambiguous",
+            answer=None,
+            message="Multiple equally relevant facts matched this query. Include more entity or attribute detail.",
             evidence=[],
         )
 
@@ -102,4 +112,3 @@ def query_facts(db: Session, query_str: str) -> QueryResultOut:
         fact_id=best_fact.id,
         evidence=evidence_items,
     )
-

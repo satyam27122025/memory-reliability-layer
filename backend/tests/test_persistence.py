@@ -4,9 +4,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
+from fastapi import FastAPI
 
-from app.main import app
 from app.database import Base, get_db
+from app.routers import facts
 from app.services import fact_service
 from app.schemas import FactCreate, FactResolveInput
 
@@ -76,6 +77,18 @@ def test_sqlite_persistence_across_sessions():
         assert loaded_fact.resolution_reason == "Confirmed with procurement division"
         assert loaded_fact.resolved_by == "Priya Sharma"
 
+        fresh_app = FastAPI()
+        fresh_app.include_router(facts.router)
+
+        def override_db():
+            yield db2
+
+        fresh_app.dependency_overrides[get_db] = override_db
+        with TestClient(fresh_app) as fresh_client:
+            response = fresh_client.get(f"/facts/{fact_id}")
+        assert response.status_code == 200
+        assert response.json()["status"] == "resolved"
+
         db2.close()
         engine2.dispose()
     finally:
@@ -84,4 +97,3 @@ def test_sqlite_persistence_across_sessions():
                 os.remove(db_path)
             except OSError:
                 pass
-

@@ -206,3 +206,28 @@ def test_reopen_after_new_contradiction(client):
     assert "resolved" in event_types
     assert "conflict_detected" in event_types
 
+
+def test_stale_assertion_revision_returns_409_without_mutation(client):
+    created = client.post("/facts", json={
+        "entity": "Revision Co",
+        "attribute": "Status",
+        "value": "Active",
+        "sourceType": "manual_entry",
+        "sourceLabel": "Initial",
+        "sourceReference": "revision-1",
+    })
+    fact = created.json()
+    assertion_id = fact["assertions"][0]["id"]
+
+    response = client.post(f"/facts/{fact['id']}/resolve", json={
+        "selectedAssertionId": assertion_id,
+        "assertionVersion": 99,
+        "resolutionReason": "Stale request",
+        "resolvedBy": "Tester",
+    })
+    assert response.status_code == 409
+
+    unchanged = client.get(f"/facts/{fact['id']}").json()
+    assert unchanged["status"] == "supported"
+    assert unchanged["selectedAssertionId"] is None
+    assert len(unchanged["history"]) == len(fact["history"])

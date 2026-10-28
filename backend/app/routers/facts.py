@@ -76,9 +76,14 @@ def update_fact(
         fact = fact_service.update_fact(db=db, fact_id=fact_id, update_in=update_in)
         return fact
     except ValueError as e:
-        if "not found" in str(e).lower():
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        err_msg = str(e)
+        if "not found" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err_msg)
+        if "does not belong" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)
+        if "stale" in err_msg.lower() or "conflict" in err_msg.lower() or "version" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=err_msg)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)
 
 
 @router.get("/{fact_id}/history", response_model=HistoryResponse)
@@ -110,5 +115,9 @@ def resolve_conflict(
         err_msg = str(e)
         if "not found" in err_msg.lower() and "fact" in err_msg.lower():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err_msg)
+        if "does not belong" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)
+        if "stale" in err_msg.lower() or "conflict" in err_msg.lower() or "version" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=err_msg)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)
 
